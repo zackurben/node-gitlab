@@ -1,5 +1,6 @@
 import Ky from 'ky-universal';
 import FormData from 'form-data';
+import Stream from 'stream';
 import { decamelizeKeys } from 'humps';
 import { stringify } from 'query-string';
 import { skipAllCaps } from './Utils';
@@ -21,6 +22,7 @@ function responseHeadersAsObject(response) {
 
 function defaultRequest(service: any, { body, query, sudo, method }) {
   const headers = new Headers(service.headers);
+  const readableStream = new Stream.Readable();
   let bod = body;
 
   if (sudo) headers.append('sudo', `${sudo}`);
@@ -33,11 +35,18 @@ function defaultRequest(service: any, { body, query, sudo, method }) {
   return {
     timeout: service.requestTimeout,
     headers,
-    method: method === 'stream' ? 'get' : method,
-    onProgress: method === 'stream' ? () => {} : undefined,
-    searchParams: stringify(decamelizeKeys(query || {}) as any, { arrayFormat: 'bracket' }),
     prefixUrl: service.url,
     body: bod,
+    method: method === 'stream' ? 'get' : method,
+    searchParams: stringify(decamelizeKeys(query || {}) as any, { arrayFormat: 'bracket' }),
+    onDownloadProgress:
+      method !== 'stream'
+        ? undefined
+        : (progress, chunk) => {
+            readableStream.push(chunk);
+          },
+
+    readableStream,
   };
 }
 
@@ -58,11 +67,14 @@ async function processBody(response) {
 
 methods.forEach(m => {
   KyRequester[m] = async function(service, endpoint, options) {
-    const requestOptions = defaultRequest(service, { ...options, method: m });
+    const { readableStream, ...requestOptions } = defaultRequest(service, {
+      ...options,
+      method: m,
+    });
     let response;
 
     try {
-      response = await Ky(endpoint, requestOptions);
+      response = Ky(endpoint, requestOptions);
     } catch (e) {
       if (e.response) {
         const output = await e.response.json();
@@ -72,6 +84,9 @@ methods.forEach(m => {
 
       throw e;
     }
+
+    if (m !== 'stream') return readableStream;
+    else response = await response;
 
     const { status } = response;
     const headers = responseHeadersAsObject(response);
