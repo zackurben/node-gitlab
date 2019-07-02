@@ -42,7 +42,7 @@ function defaultRequest(service: any, { body, query, sudo, method }) {
     onDownloadProgress:
       method !== 'stream'
         ? undefined
-        : (progress, chunk) => {
+        : ({}, chunk) => {
             readableStream.push(chunk);
           },
 
